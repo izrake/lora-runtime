@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>LLM Chat Interface</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .model-selector {
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 5px;
+        }
+        
+        .chat-container {
+            height: 400px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+        
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        
+        .user-message {
+            background: #e3f2fd;
+            margin-left: 20%;
+        }
+        
+        .bot-message {
+            background: #f5f5f5;
+            margin-right: 20%;
+        }
+        
+        .input-container {
+            display: flex;
+            gap: 10px;
+        }
+        
+        #userInput {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        
+        button {
+            padding: 10px 20px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        
+        button:disabled {
+            background: #ccc;
+        }
+        
+        .status {
+            color: #666;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="model-selector">
+        <h2>Model Selection</h2>
+        <select id="modelSelect">
+            <option value="facebook/opt-125m">OPT-125M (Small)</option>
+            <option value="facebook/opt-350m">OPT-350M (Medium)</option>
+            <option value="deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B">DeepSeek-R1-Distill-Qwen</option>
+            <option value="gpt2">GPT-2 (Small)</option>
+        </select>
+        <button onclick="loadModel()">Load Model</button>
+        <div id="modelStatus" class="status"></div>
+    </div>
+
+    <div class="chat-container" id="chatContainer"></div>
+
+    <div class="input-container">
+        <input type="text" id="userInput" placeholder="Type your message..." onkeypress="if(event.key === 'Enter') sendMessage()">
+        <button onclick="sendMessage()" id="sendButton" disabled>Send</button>
+    </div>
+
+    <script>
+        let currentModel = null;
+
+        async function loadModel() {
+            const modelSelect = document.getElementById('modelSelect');
+            const modelStatus = document.getElementById('modelStatus');
+            const sendButton = document.getElementById('sendButton');
+            
+            modelStatus.textContent = 'Loading model...';
+            sendButton.disabled = true;
+            
+            try {
+                const response = await fetch('/load_model', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        base_model_name: modelSelect.value
+                    }),
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    currentModel = modelSelect.value;
+                    modelStatus.textContent = `Model loaded: ${currentModel}`;
+                    sendButton.disabled = false;
+                } else {
+                    modelStatus.textContent = `Error: ${result.detail}`;
+                }
+            } catch (error) {
+                modelStatus.textContent = `Error: ${error.message}`;
+            }
+        }
+
+        function addMessage(text, isUser) {
+            const chatContainer = document.getElementById('chatContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
+            messageDiv.textContent = text;
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const userInput = document.getElementById('userInput');
+            const sendButton = document.getElementById('sendButton');
+            const text = userInput.value.trim();
+            
+            if (!text) return;
+            
+            addMessage(text, true);
+            userInput.value = '';
+            sendButton.disabled = true;
+
+            try {
+                const response = await fetch('/generate/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        prompt: text,
+                        max_length: 100,
+                        temperature: 0.7,
+                        top_p: 0.9
+                    }),
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let botResponse = '';
+
+                while (true) {
+                    const {value, done} = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.token) {
+                                botResponse += data.token;
+                            }
+                        }
+                    }
+                }
+
+                addMessage(botResponse, false);
+            } catch (error) {
+                addMessage(`Error: ${error.message}`, false);
+            } finally {
+                sendButton.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
